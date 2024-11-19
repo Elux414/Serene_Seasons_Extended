@@ -201,11 +201,15 @@ publishing {
         }
     }
     repositories {
-        maven {
-            url "file://${project.projectDir}/mcmodsrepo"
-        }
+    maven {
+      name = "GitHubPackages"
+      url = "https://maven.pkg.github.com/Elux414/Serene_Seasons_Extended"
+      credentials {
+        username = System.getenv("GITHUB_ACTOR")
+        password = System.getenv("GITHUB_TOKEN")
+      }
     }
-}
+  }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
