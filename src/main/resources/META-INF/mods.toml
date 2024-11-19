@@ -1,0 +1,12 @@
+modLoader="javafml"
+loaderVersion="[47,)"
+license="MIT"  # Замените "MIT" на вашу лицензию
+
+[[mods]]
+modId="sereneseasonsextended"
+version="1.0.0"
+displayName="Serene Seasons Extended"
+description="Небольшие улучшения для Serene Seasons."
+authors="Elux414"
+credits="ChatGPT4"
+updateJSONURL=""
