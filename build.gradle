@@ -195,23 +195,17 @@ tasks.named('jar', Jar).configure {
 
 // Example configuration to allow publishing using the maven-publish plugin
 publishing {
-            repositories {
-                maven {
-                    name = "GitHubPackages"
-                    url = "https://maven.pkg.github.com/Elux414/Serene_Seasons_Extended"
-                    credentials {
-                        username = System.getenv("GITHUB_ACTOR")
-                        password = System.getenv("GITHUB_TOKEN")
-                    }
-                }
-            }
-        
-            publications {
-                maven(MavenPublication) {
-                    artifact jar
-                }
-            }
+    publications {
+        register('mavenJava', MavenPublication) {
+            artifact jar
         }
+    }
+    repositories {
+        maven {
+            url "file://${project.projectDir}/mcmodsrepo"
+        }
+    }
+}
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8' // Use the UTF-8 charset for Java compilation
