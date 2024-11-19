@@ -209,9 +209,6 @@ publishing {
             publications {
                 maven(MavenPublication) {
                     artifact jar
-                    groupId = project.ext.group
-                    artifactId = project.ext.name
-                    version = project.ext.version
                 }
             }
         }
