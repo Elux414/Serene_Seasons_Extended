@@ -5,12 +5,15 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.LevelReader;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import net.minecraft.core.Holder;
 import sereneseasons.api.season.Season;
 import sereneseasons.api.season.SeasonHelper;
 
@@ -23,7 +26,8 @@ public class SnowBlockReplacer {
     private static final Logger LOGGER = LogManager.getLogger("SnowBlockReplacer");
     private static final Random RANDOM = new Random();
     private static final Map<ServerPlayer, BlockPos> playerPositions = new HashMap<>();
-    private static final int UPDATE_INTERVAL = 100; // каждые 5 секунд
+    private static final Map<String, Float> biomeTemperatures = new HashMap<>();
+    private static final int UPDATE_INTERVAL = 100;
     private static int tickCounter = 0;
 
     @SubscribeEvent
@@ -32,26 +36,19 @@ public class SnowBlockReplacer {
             return;
         }
 
-        LOGGER.debug("SnowBlockReplacer: Processing server tick. Tick count = {}", tickCounter);
-
         tickCounter++;
         MinecraftServer server = event.getServer();
         Level level = server.getLevel(Level.OVERWORLD);
 
         if (level == null) {
-            LOGGER.warn("SnowBlockReplacer: Overworld level is null. Skipping this tick.");
-            return; // Убедимся, что мир доступен
+            return;
         }
 
-        // Обновляем позиции игроков каждые 5 секунд
         if (tickCounter % UPDATE_INTERVAL == 0) {
-            LOGGER.info("SnowBlockReplacer: Updating player positions.");
             updatePlayerPositions(server.getPlayerList().getPlayers());
         }
 
-        // Заменяем снежные блоки на воздух случайно
         if (tickCounter % getRandomInterval() == 0) {
-            LOGGER.info("SnowBlockReplacer: Replacing snow blocks.");
             replaceSnowBlocks(level);
         }
     }
@@ -63,46 +60,110 @@ public class SnowBlockReplacer {
     }
 
     private static void replaceSnowBlocks(Level level) {
-        Season.SubSeason currentSubSeason = SeasonHelper.getSeasonState(level).getSubSeason();
-
-        // Не выполняем замену блоков в зимний период
-        if (isWinterSubSeason(currentSubSeason)) {
-            return;
-        }
-
         for (Map.Entry<ServerPlayer, BlockPos> entry : playerPositions.entrySet()) {
             ServerPlayer player = entry.getKey();
             BlockPos playerPos = entry.getValue();
 
-            // Получаем радиус симуляции
             int simulationDistance = getSimulationDistance(player);
             int radius = simulationDistance * 16;
-            LOGGER.debug("SnowBlockReplacer: Checking blocks within radius {} around player {}", radius, playerPos);
 
-            BlockPos targetPos = findSnowBlockInRadius(level, playerPos, radius);
-            if (targetPos != null) {
-                LOGGER.info("Found snow block at {}", targetPos);
-                boolean blockReplaced = level.setBlock(targetPos, Blocks.AIR.defaultBlockState(), 3);
-                if (blockReplaced) {
-                    LOGGER.info("Successfully replaced snow block at {}", targetPos);
-                } else {
-                    LOGGER.warn("Failed to replace block at {}", targetPos);
-                }
-            } else {
-                LOGGER.warn("No snow block found within the radius.");
+            Season.SubSeason currentSubSeason = SeasonHelper.getSeasonState(level).getSubSeason();
+            float temperature = getCachedBiomeTemperature(level, playerPos, currentSubSeason);
+            if (temperature < 0.15f) { // Пропускаем обработку в холодных биомах
+                continue;
             }
+
+            int blocksToReplace = calculateBlocksToReplace(temperature);
+
+            for (int i = 0; i < blocksToReplace; i++) {
+                BlockPos targetPos = findSnowBlockInRadius(level, playerPos, radius);
+                if (targetPos != null) {
+                    boolean blockReplaced = level.setBlock(targetPos, Blocks.AIR.defaultBlockState(), 3);
+                    if (blockReplaced) {
+                        LOGGER.debug("Replaced snow block at {}", targetPos);
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    private static float getCachedBiomeTemperature(Level level, BlockPos pos, Season.SubSeason currentSubSeason) {
+        Holder<Biome> biomeHolder = level.getBiome(pos);
+        String biomeName = biomeHolder.unwrapKey().map(Object::toString).orElse("unknown");
+
+        // Если температура для этого биома ещё не закэширована
+        if (!biomeTemperatures.containsKey(biomeName)) {
+            // Получаем базовую температуру для биома
+            float temperature = getBiomeTemperature(level, biomeHolder, pos);
+
+            // Проверка на зимний субсезон
+            if (isWinterSubSeason(currentSubSeason)) {
+                // Понижаем температуру до 0.14F, если она выше
+                if (temperature > 0.14f) {
+                    temperature = 0.14f; // Понижаем температуру до 0.14F
+                }
+            }
+
+            // Сохраняем температуру в кэш
+            biomeTemperatures.put(biomeName, temperature);
+            LOGGER.info("Biome: {}, Temperature: {}", biomeName, temperature); // Логирование температуры
+            return temperature;
+        }
+
+        // Если температура уже закэширована, проверяем, нужно ли обновить кэш
+        float cachedTemperature = biomeTemperatures.get(biomeName);
+
+        // Если субсезон не зима, обновляем кэш
+        if (!isWinterSubSeason(currentSubSeason)) {
+            // Получаем актуальную температуру для не зимнего сезона
+            float newTemperature = getBiomeTemperature(level, biomeHolder, pos);
+
+            // Если новая температура отличается от закэшированной или если была установлена зимняя температура
+            if (newTemperature != cachedTemperature || cachedTemperature <= 0.14f) {
+                // Сброс кэша и обновление температуры для не зимнего сезона
+                biomeTemperatures.put(biomeName, newTemperature);
+                LOGGER.info("Biome: {}, Updated Temperature: {}", biomeName, newTemperature); // Логирование обновленной температуры
+                return newTemperature;
+            }
+        }
+
+        // Если субсезон снова зима, возвращаем закэшированную температуру
+        if (isWinterSubSeason(currentSubSeason) && cachedTemperature > 0.14f) {
+            // Если субсезон снова зимний и температура была выше 0.14F, сбрасываем её на зимнюю
+            cachedTemperature = 0.14f;
+            biomeTemperatures.put(biomeName, cachedTemperature);
+            LOGGER.info("Biome: {}, Reset Temperature to Winter: {}", biomeName, cachedTemperature);
+        }
+
+        return cachedTemperature;
+    }
+
+    /**
+     * Получение температуры биома.
+     */
+    public static float getBiomeTemperature(LevelReader level, Holder<Biome> biomeHolder, BlockPos pos) {
+        Biome biome = biomeHolder.value(); // Извлекаем объект Biome из Holder
+        return biome.getBaseTemperature(); // Используем базовую температуру
+    }
+
+    private static int calculateBlocksToReplace(float temperature) {
+        if (temperature < 0.2f) {
+            return 1;
+        } else if (temperature < 0.5f) {
+            return 3;
+        } else {
+            return 5;
         }
     }
 
     private static int getSimulationDistance(ServerPlayer player) {
         MinecraftServer server = player.getServer();
         if (server != null) {
-            int simulationDistance = server.getPlayerList().getViewDistance(); // Получаем настройку серверного расстояния симуляции
-            LOGGER.debug("Simulation distance for player {} is {}", player.getName().getString(), simulationDistance);
-            return simulationDistance;
+            return server.getPlayerList().getViewDistance();
         }
-        LOGGER.warn("Server is null or unable to get view distance, using default value of 10.");
-        return 10; // Значение по умолчанию
+        return 10;
     }
 
     private static BlockPos findSnowBlockInRadius(Level level, BlockPos center, int radius) {
@@ -126,6 +187,6 @@ public class SnowBlockReplacer {
     }
 
     private static int getRandomInterval() {
-        return 60 + RANDOM.nextInt(120); // случайное число от 3 до 8 секунд в тиках
+        return 60 + RANDOM.nextInt(120);
     }
 }
