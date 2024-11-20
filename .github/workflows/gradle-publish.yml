@@ -41,7 +41,6 @@ jobs:
 
     # The USERNAME and TOKEN need to correspond to the credentials environment variables used in
     # the publishing section of your build.gradle
-    - name: Publish to GitHub Packages
-      run: ./gradlew publish
+    - name: CurseForge Publish
+      run: ./gradlew curseforge -PcurseApiKey=${CURSE_API_KEY}
       env:
-        token: ${{ secrets.GITHUB_TOKEN }}
